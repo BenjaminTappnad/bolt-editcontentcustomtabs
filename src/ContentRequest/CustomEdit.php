@@ -212,7 +212,7 @@ class CustomEdit extends Edit
                         $key = ['contenttypes', $contentType['slug'], 'group', $group];
                         $addGroup($group, Trans::__($key, $default));
                     }
-                    $groups[$group]['fields'][] = 'relation_' . $relationName;
+                    array_unshift($groups[$group]['fields'], 'relation_' . $relationName);
                 }
             }
         }
@@ -230,7 +230,7 @@ class CustomEdit extends Edit
                     $key = ['contenttypes', $contentType['slug'], 'group', $group];
                     $addGroup($group, Trans::__($key, $default));
                 }
-                $groups[$group]['fields'][] = 'taxonomy_' . $taxonomy;
+                array_unshift($groups[$group]['fields'], 'taxonomy_' . $taxonomy);
             }
         }
 
