@@ -4,6 +4,8 @@ Editcontentcustomtabs
 This [bolt.cm](https://bolt.cm/) extension allows you to place templatefields,
 relations and taxonomies in any tab.
 
+This is a FORK to have it working with Bolt 3.5 (no more error with "setCanUpload").
+
 ### Installation
 1. Login to your Bolt installation
 2. Go to "Extend" or "Extras > Extend"

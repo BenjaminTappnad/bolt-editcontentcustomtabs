@@ -2,18 +2,10 @@
 
 namespace Bolt\Extension\SahAssar\Editcontentcustomtabs\ContentRequest;
 
-use Bolt\Config;
-use Bolt\Filesystem\Exception\IOException;
-use Bolt\Filesystem\Manager;
-use Bolt\Logger\FlashLoggerInterface;
 use Bolt\Storage\Entity\Content;
 use Bolt\Storage\Entity\TemplateFields;
-use Bolt\Storage\EntityManager;
-use Bolt\Storage\Repository;
 use Bolt\Translation\Translator as Trans;
-use Bolt\Users;
 use Cocur\Slugify\Slugify;
-use Psr\Log\LoggerInterface;
 use Bolt\Storage\ContentRequest\Edit;
 use Bolt\Storage\Mapping\ContentType;
 
@@ -43,9 +35,6 @@ class CustomEdit extends Edit
          * get a reflection of the parent.
          */
         $reflector = (new \ReflectionObject($this))->getParentClass();
-
-        $setCanUpload = $reflector->getMethod('setCanUpload');
-        $setCanUpload->setAccessible(true);
 
         $getPublishingDate = $reflector->getMethod('getPublishingDate');
         $getPublishingDate->setAccessible(true);
@@ -79,7 +68,6 @@ class CustomEdit extends Edit
             $content->setDatepublish('');
             $content->setDatedepublish(null);
             $content->setDatechanged('');
-            $content->setUsername('');
             $content->setOwnerid('');
 
             $this->loggerFlash->info(Trans::__('contenttypes.generic.duplicated-finalize', ['%contenttype%' => $contentTypeSlug]));
@@ -105,13 +93,6 @@ class CustomEdit extends Edit
             if ($record) {
                 $incomingNotInverted[$fromContentType][] = $record;
             }
-        }
-
-        // Test write access for uploadable fields.
-        $contentType['fields'] = $setCanUpload->invoke($this, $contentType['fields']);
-        $templateFields = $content->getTemplatefields();
-        if ($templateFields instanceof TemplateFields && $templateFieldsData = $templateFields->getContenttype()->getFields()) {
-            $templateFields->getContenttype()['fields'] = $setCanUpload->invoke($this, $templateFields->getContenttype()->getFields());
         }
 
         // Build context for Twig.
