@@ -75,7 +75,7 @@
                         </li>
                     {% endfor %}
                     {% for group_name, group in context.groups if group_name == 'relations' %}
-                        {% for relation in context.contenttype.relations|default([])|merge(context.incoming_not_inv) if output is not defined and not relation.group %}
+                        {% for relation in context.contenttype.relations|default([])|merge(context.incoming_not_inv) if output is not defined and relation.group is not defined %}
                             {% set output = true %}
                             <li{{ group.is_active ? ' class="active"' : '' }} id="tabindicator-{{ group.id }}">
                                 <a href="#{{ group.id }}" data-toggle="tab">{{ group.label }}</a>
