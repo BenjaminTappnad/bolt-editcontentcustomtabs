@@ -19,14 +19,17 @@ class EditcontentcustomtabsExtension extends SimpleExtension
     {
         $app['storage.request.edit'] = $app->share(
             function ($app) {
-                return new ContentRequest\CustomEdit(
+                $ce = new ContentRequest\CustomEdit(
                     $app['storage'],
                     $app['config'],
                     $app['users'],
                     $app['filesystem'],
                     $app['logger.system'],
-                    $app['logger.flash']
+                    $app['logger.flash'],
+                    $app['query']
                 );
+
+                return $ce;
             }
         );
     }

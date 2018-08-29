@@ -2,12 +2,20 @@
 
 namespace Bolt\Extension\SahAssar\Editcontentcustomtabs\ContentRequest;
 
+use Bolt\Config;
 use Bolt\Storage\Entity\Content;
+use Bolt\Form\Resolver;
 use Bolt\Storage\Entity\TemplateFields;
+use Bolt\Storage\EntityManager;
+use Bolt\Storage\Query\Query;
 use Bolt\Translation\Translator as Trans;
+use Bolt\Users;
 use Cocur\Slugify\Slugify;
 use Bolt\Storage\ContentRequest\Edit;
 use Bolt\Storage\Mapping\ContentType;
+use Bolt\Filesystem\Manager;
+use Psr\Log\LoggerInterface;
+use Bolt\Logger\FlashLoggerInterface;
 
 /**
  * CustomEdit class.
@@ -19,12 +27,31 @@ use Bolt\Storage\Mapping\ContentType;
 class CustomEdit extends Edit
 {
 
+
+    /**
+     * @var Query
+     */
+    private $query;
+
+    public function __construct(
+        EntityManager $em,
+        Config $config,
+        Users $users,
+        Manager $filesystem,
+        LoggerInterface $loggerSystem,
+        FlashLoggerInterface $loggerFlash,
+        Query $query
+    ) {
+        parent::__construct($em, $config, $users, $filesystem, $loggerSystem, $loggerFlash);
+        $this->query = $query;
+    }
+
     /**
      * Do the edit form for a record.
      *
-     * @param Content     $content     A content record
+     * @param Content     $content A content record
      * @param ContentType $contentType The contenttype data
-     * @param boolean     $duplicate   If TRUE create a duplicate record
+     * @param boolean     $duplicate If TRUE create a duplicate record
      *
      * @return array
      */
@@ -34,28 +61,29 @@ class CustomEdit extends Edit
          * We need to access these later down, but they are all private, so we
          * get a reflection of the parent.
          */
-        $reflector = (new \ReflectionObject($this))->getParentClass();
+        $reflectorParent = (new \ReflectionObject($this))->getParentClass();
 
-        $getPublishingDate = $reflector->getMethod('getPublishingDate');
+        $getPublishingDate = $reflectorParent->getMethod('getPublishingDate');
         $getPublishingDate->setAccessible(true);
 
-        $getTemplateFieldTemplates = $reflector->getMethod('getTemplateFieldTemplates');
+        $getTemplateFieldTemplates = $reflectorParent->getMethod('getTemplateFieldTemplates');
         $getTemplateFieldTemplates->setAccessible(true);
 
-        $getUsedFieldtypes = $reflector->getMethod('getUsedFieldtypes');
+        $getUsedFieldtypes = $reflectorParent->getMethod('getUsedFieldtypes');
         $getUsedFieldtypes->setAccessible(true);
 
-        $getRelationsList = $reflector->getMethod('getRelationsList');
+        $getRelationsList = $reflectorParent->getMethod('getRelationsList');
         $getRelationsList->setAccessible(true);
 
         $contentTypeSlug = $contentType['slug'];
-        $new = $content->getId() === null ?: false;
-        $oldStatus = $content->getStatus();
-        $allStatuses = ['published', 'held', 'draft', 'timed'];
+        $new             = $content->getId() === null ?: false;
+        $oldStatus       = $content->getStatus();
+        $allStatuses     = ['published', 'held', 'draft', 'timed'];
         $allowedStatuses = [];
 
         foreach ($allStatuses as $status) {
-            if ($this->users->isContentStatusTransitionAllowed($oldStatus, $status, $contentTypeSlug, $content->getId())) {
+            if ($this->users->isContentStatusTransitionAllowed($oldStatus, $status, $contentTypeSlug,
+                $content->getId())) {
                 $allowedStatuses[] = $status;
             }
         }
@@ -68,9 +96,11 @@ class CustomEdit extends Edit
             $content->setDatepublish('');
             $content->setDatedepublish(null);
             $content->setDatechanged('');
+            $content->setUsername('');
             $content->setOwnerid('');
 
-            $this->loggerFlash->info(Trans::__('contenttypes.generic.duplicated-finalize', ['%contenttype%' => $contentTypeSlug]));
+            $this->loggerFlash->info(Trans::__('contenttypes.generic.duplicated-finalize',
+                ['%contenttype%' => $contentTypeSlug]));
         }
 
         // Set the users and the current owner of this content.
@@ -84,53 +114,82 @@ class CustomEdit extends Edit
 
         // Build list of incoming non inverted related records.
         $incomingNotInverted = [];
+        $count               = 0;
+        $limit               = $this->config->get('general/compatibility/incoming_relations_limit', false);
         foreach ($content->getRelation()->incoming($content) as $relation) {
+            /** @var Relations $relation */
             if ($relation->isInverted() || $relation->getFromContenttype() === $relation->getToContenttype()) {
                 continue;
             }
             $fromContentType = $relation->getFromContenttype();
-            $record = $this->em->getContent($fromContentType . '/' . $relation->getFromId());
+            $record          = $this->em->getContent($fromContentType . '/' . $relation->getFromId());
+
             if ($record) {
                 $incomingNotInverted[$fromContentType][] = $record;
             }
+
+            // Do not try to load more than X records or db will fail
+            ++$count;
+            if ($limit && $count > $limit) {
+                break;
+            }
         }
 
+        /** @var Content $templateFieldsEntity */
+        $templateFieldsEntity = $content->getTemplatefields();
+        $templateFields       = [];
+        if ($templateFieldsEntity instanceof TemplateFields) {
+            /** @var ContentType $templateFieldsContentType */
+            $templateFieldsContentType           = $templateFieldsEntity->getContenttype();
+            $templateFields                      = $templateFieldsContentType->getFields();
+            $templateFieldsContentType['fields'] = $templateFields;
+        }
+
+        // Temporary choice option resolver. Will be removed with Forms work circa Bolt 3.5.
+        $choiceResolver = new Resolver\Choice($this->query);
+
+        // Intersect the set taxonomies with actually existing ones, because bogus ones are just confusing.
+        $existingTaxonomies = array_intersect(array_keys($this->config->get('taxonomy')),
+            (array)$contentType['taxonomy']);
+
         // Build context for Twig.
-        $contextCan = [
-            'upload'             => $this->users->isAllowed('files:uploads'),
-            'publish'            => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':publish:' . $content->getId()),
-            'depublish'          => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':depublish:' . $content->getId()),
-            'change_ownership'   => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':change-ownership:' . $content->getId()),
+        $contextCan    = [
+            'upload'           => $this->users->isAllowed('files:uploads'),
+            'publish'          => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':publish:' . $content->getId()),
+            'depublish'        => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':depublish:' . $content->getId()),
+            'change_ownership' => $this->users->isAllowed('contenttype:' . $contentTypeSlug . ':change-ownership:' . $content->getId()),
         ];
-        $contextHas = [
+        $contextHas    = [
             'incoming_relations' => count($incomingNotInverted) > 0,
             'relations'          => isset($contentType['relations']),
-            'tabs'               => $contentType['groups'] !== false,
-            'taxonomy'           => isset($contentType['taxonomy']),
-            'templatefields'     => empty($templateFieldsData) ? false : true,
+            'tabs'               => $contentType['groups'] !== [],
+            'taxonomy'           => $existingTaxonomies !== [],
+            'templatefields'     => count($templateFields) > 0,
         ];
         $contextValues = [
-            'datepublish'        => $getPublishingDate->invoke($this, $content->getDatepublish(), true),
-            'datedepublish'      => $getPublishingDate->invoke($this, $content->getDatedepublish()),
+            'datepublish'    => $getPublishingDate->invoke($this, $content->getDatepublish(), true),
+            'datedepublish'  => $getPublishingDate->invoke($this, $content->getDatedepublish()),
+            'select_choices' => $choiceResolver->get($contentType, (array)$templateFields),
         ];
-        $context = [
-            'incoming_not_inv'   => $incomingNotInverted,
-            'contenttype'        => $contentType,
-            'content'            => $content,
-            'allowed_status'     => $allowedStatuses,
-            'contentowner'       => $contentowner,
-            'fields'             => $this->config->fields->fields(),
-            'fieldtemplates'     => $getTemplateFieldTemplates->invoke($this, $contentType, $content),
-            'fieldtypes'         => $getUsedFieldtypes->invoke($this, $contentType, $content, $contextHas),
+        $context       = [
+            'incoming_not_inv' => $incomingNotInverted,
+            'contenttype'      => $contentType,
+            'content'          => $content,
+            'allowed_status'   => $allowedStatuses,
+            'contentowner'     => $contentowner,
+            'duplicate'        => $duplicate,
+            'fields'           => $this->config->fields->fields(),
+            'fieldtemplates'   => $getTemplateFieldTemplates->invoke($this, $contentType, $content),
+            'fieldtypes'       => $getUsedFieldtypes->invoke($this, $contentType, $content, $contextHas),
             /*
              * Most of the heavy lifting is in createGroupTabs, but we changed
              * the function signature to include $content and $incomingNotInverted
              */
-            'groups'             => $this->createGroupTabs($contentType, $contextHas, $content, $incomingNotInverted),
-            'can'                => $contextCan,
-            'has'                => $contextHas,
-            'values'             => $contextValues,
-            'relations_list'     => $getRelationsList->invoke($this, $contentType),
+            'groups'           => $this->createGroupTabs($contentType, $contextHas, $content, $incomingNotInverted),
+            'can'              => $contextCan,
+            'has'              => $contextHas,
+            'values'           => $contextValues,
+            'relations_list'   => $getRelationsList->invoke($this, $contentType),
         ];
 
         return $context;
@@ -150,7 +209,7 @@ class CustomEdit extends Edit
      */
     private function createGroupTabs(ContentType $contentType, array $has, Content $content, $incomingNotInverted)
     {
-        $groups = [];
+        $groups   = [];
         $groupIds = [];
         $addGroup = function ($group, $label) use (&$groups, &$groupIds) {
             $nr = count($groups) + 1;
@@ -164,12 +223,12 @@ class CustomEdit extends Edit
                 'is_active' => $nr === 1,
                 'fields'    => [],
             ];
-            $groupIds[$id] = 1;
+            $groupIds[$id]  = 1;
         };
 
         foreach ($contentType['groups'] ? $contentType['groups'] : ['ungrouped'] as $group) {
             $default = ['DEFAULT' => ucfirst($group)];
-            $key = ['contenttypes', $contentType['slug'], 'group', $group];
+            $key     = ['contenttypes', $contentType['slug'], 'group', $group];
             $addGroup($group, Trans::__($key, $default));
         }
 
@@ -181,13 +240,13 @@ class CustomEdit extends Edit
         /*
          * Create groups for templatefields
          */
-        if($content->getTemplatefields()){
+        if ($content->getTemplatefields()) {
             $currentGroup = 'template';
             foreach ($content->getTemplatefields()->getContenttype()['fields'] as $fieldName => $field) {
                 $group = $field['group'] === 'ungrouped' ? $currentGroup : $field['group'];
                 if (!array_key_exists($group, $groups)) {
                     $default = ['DEFAULT' => ucfirst($group)];
-                    $key = ['contenttypes', $contentType['slug'], 'group', $group];
+                    $key     = ['contenttypes', $contentType['slug'], 'group', $group];
                     $addGroup($group, Trans::__($key, $default));
                 }
                 $groups[$group]['fields'][] = 'templatefield_' . $fieldName;
@@ -209,7 +268,7 @@ class CustomEdit extends Edit
                     $group = isset($relation['group']) ? $relation['group'] : $currentGroup;
                     if (!array_key_exists($group, $groups)) {
                         $default = ['DEFAULT' => ucfirst($group)];
-                        $key = ['contenttypes', $contentType['slug'], 'group', $group];
+                        $key     = ['contenttypes', $contentType['slug'], 'group', $group];
                         $addGroup($group, Trans::__($key, $default));
                     }
                     array_unshift($groups[$group]['fields'], 'relation_' . $relationName);
@@ -224,10 +283,10 @@ class CustomEdit extends Edit
             $currentGroup = 'taxonomy';
             foreach ($contentType['taxonomy'] as $taxonomy) {
                 $taxonomyConfig = $this->config->get('taxonomy')[$taxonomy];
-                $group = isset($taxonomyConfig['group']) ? $taxonomyConfig['group'] : $currentGroup;
+                $group          = isset($taxonomyConfig['group']) ? $taxonomyConfig['group'] : $currentGroup;
                 if (!array_key_exists($group, $groups)) {
                     $default = ['DEFAULT' => ucfirst($group)];
-                    $key = ['contenttypes', $contentType['slug'], 'group', $group];
+                    $key     = ['contenttypes', $contentType['slug'], 'group', $group];
                     $addGroup($group, Trans::__($key, $default));
                 }
                 array_unshift($groups[$group]['fields'], 'taxonomy_' . $taxonomy);
