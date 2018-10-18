@@ -1,6 +1,6 @@
 <?php
 
-namespace Bolt\Extension\SahAssar\Editcontentcustomtabs\ContentRequest;
+namespace Bolt\Extension\BenjaminTappnad\Editcontentcustomtabs\ContentRequest;
 
 use Bolt\Config;
 use Bolt\Storage\Entity\Content;

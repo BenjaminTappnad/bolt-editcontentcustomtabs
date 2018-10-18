@@ -1,5 +1,5 @@
 {
-  "name": "BenjaminTappnad/bolt-editcontentcustomtabs",
+  "name": "benjamintappnad/bolt-editcontentcustomtabs",
   "description": "This extension allows you to place templatefields, relations and taxonomies in any tab.",
   "type": "bolt-extension",
   "keywords": [
@@ -18,11 +18,11 @@
   "prefer-stable": true,
   "autoload": {
     "psr-4": {
-      "Bolt\\Extension\\SahAssar\\Editcontentcustomtabs\\": "src"
+      "Bolt\\Extension\\BenjaminTappnad\\Editcontentcustomtabs\\": "src"
     }
   },
   "extra": {
     "bolt-assets": "web",
-    "bolt-class": "Bolt\\Extension\\SahAssar\\Editcontentcustomtabs\\EditcontentcustomtabsExtension"
+    "bolt-class": "Bolt\\Extension\\BenjaminTappnad\\Editcontentcustomtabs\\EditcontentcustomtabsExtension"
   }
 }

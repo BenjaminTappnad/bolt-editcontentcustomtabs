@@ -1,6 +1,6 @@
 <?php
 
-namespace Bolt\Extension\SahAssar\Editcontentcustomtabs;
+namespace Bolt\Extension\BenjaminTappnad\Editcontentcustomtabs;
 
 use Bolt\Extension\SimpleExtension;
 use Silex\Application;
